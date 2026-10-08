@@ -1,6 +1,6 @@
 # OctoGemma
 
-> Privacy-First Autonomous Coding & Self-Healing Agent powered by Google Gemma 4.
+> Privacy-First Autonomous Coding & Self-Healing Agent powered by Google Gemma 4 and Qwen3-Coder, running together locally.
 
 Built for **Hacktoberfest Hack Day — Coimbatore 2026**, organized by **INIT CLUB × iDEA CLUB** in collaboration with **Major League Hacking (MLH)**.
 
@@ -13,7 +13,7 @@ Built for **Hacktoberfest Hack Day — Coimbatore 2026**, organized by **INIT CL
 | Member | Role / Focus Area | Key Contributions |
 | ------ | ----------------- | ----------------- |
 | **Vijay Raghav** | Core Architecture & Agent Logic | ReAct Loop, Self-Healing Recovery, Agent Orchestration, Tool Dispatching |
-| **Nikkil Prithvin** | Frontend & LLM Integration | Roo Code Web Studio, SSE Streaming, llama.cpp/Ollama Bridge, Model Management, Fallback Parser |
+| **Nikkil Prithvin** | Frontend & LLM Integration | Roo Code Web Studio, SSE Streaming, llama.cpp/Ollama Bridge, Gemma 4 + Qwen Model Integration, Model Management, Fallback Parser |
 | **Dwaragesh** | Sandbox Tools & Execution | File Operations, Terminal/Git Tools, Unified Diff Engine, Safe Workspace Execution |
 | **Austus Samuvel** | CLI, Testing & Infrastructure | CLI Interface, Benchmark Suite, Test Infrastructure, Config System, Documentation, Demo Scenarios |
 ---
@@ -33,7 +33,7 @@ Developers need an agent that operates with true autonomy: one that doesn't just
 
 ## Solution
 
-**OctoGemma** is an autonomous, privacy-first software engineering agent designed to run entirely locally using **Google Gemma 4** (specifically optimized for `gemma4:e4b` and `gemma4:12b` via Ollama).
+**OctoGemma** is an autonomous, privacy-first software engineering agent designed to run entirely locally. It uses **Google Gemma 4** (`gemma4:e4b` and `gemma4:12b` via Ollama) together with **Qwen3-Coder**, and the two models are integrated into a single agent pipeline.
 
 OctoGemma features an automated **ReAct + Self-Healing Execution Loop**:
 1. **Explore:** Scans workspace directory trees and searches codebases with pattern/regex grep.
@@ -46,7 +46,7 @@ OctoGemma features an automated **ReAct + Self-Healing Execution Loop**:
 - **Dual Interface:**
   - **OctoGemma Web Studio:** A glassmorphic web dashboard with real-time streaming agent thoughts, file tree explorer, unified diff viewer, integrated terminal output, model switcher, and one-click benchmark scenarios.
   - **OctoGemma CLI:** An interactive, terminal UI powered by `rich` and `typer` with colored diffs and progress streaming.
-- **Native Gemma 4 Integration:** Tailored system prompts and structured tool calling designed for Google Gemma 4's reasoning architecture, with fallback support for other local models (`deepseek-coder-v2`, `qwen3-coder`).
+- **Gemma 4 + Qwen Integration:** Google Gemma 4 is integrated with Qwen3-Coder inside the same agent loop. Tailored system prompts and structured tool calling are designed for Gemma 4's reasoning architecture, while Qwen3-Coder strengthens code understanding and generation. `deepseek-coder-v2` is kept as an additional fallback.
 - **Autonomous Self-Healing:** Automatic detection of test failures with iterative re-patching and regression prevention.
 - **Sandboxed Workspace Execution:** Protected path resolution preventing directory traversal outside the target workspace.
 - **Real-Time Event Streaming:** Server-Sent Events (SSE) providing transparent visibility into every reasoning step and tool invocation.
@@ -60,7 +60,7 @@ OctoGemma features an automated **ReAct + Self-Healing Execution Loop**:
 | **Privacy & Security** | Code transmitted to external cloud APIs | 100% offline & local via Ollama |
 | **Verification Loop** | Static text suggestions; manual user testing | Autonomous terminal execution and test validation |
 | **Failure Recovery** | User must manually paste error tracebacks | Built-in self-healing loop that reads stderr and re-attempts |
-| **Model Engine** | Proprietary cloud LLMs | Google Gemma 4 open weights |
+| **Model Engine** | Proprietary cloud LLMs | Google Gemma 4 integrated with Qwen3-Coder (open weights) |
 | **User Surface** | Text chat or basic editor plugin | Dual Interface: Interactive CLI & Real-time Web Studio |
 
 ---
@@ -85,7 +85,8 @@ flowchart TD
     subgraph LLM Layer [Local Inference]
         Ollama[Local Ollama Daemon]
         Gemma4[(Google Gemma 4)]
-        FallbackModels[(DeepSeek / Qwen3-Coder)]
+        Qwen[(Qwen3-Coder)]
+        FallbackModels[(DeepSeek Coder)]
     end
 
     subgraph Sandbox Tools [Workspace Sandbox]
@@ -102,6 +103,8 @@ flowchart TD
     Agent --> Prompt
     Agent --> Ollama
     Ollama --> Gemma4
+    Ollama --> Qwen
+    Gemma4 <-->|Integrated| Qwen
     Ollama -.-> FallbackModels
     Ollama --> Parser
     Parser --> Agent
@@ -120,7 +123,7 @@ flowchart TD
 | Frontend | Vanilla HTML5, Vanilla CSS3 (Custom Dark Theme & Glassmorphism), Modern ES6 JavaScript |
 | Backend | Python 3.14+, FastAPI, Starlette, Uvicorn (ASGI) |
 | CLI | Typer, Rich |
-| AI / LLM | Google Gemma 4 (`gemma4:e4b` / `gemma4:12b`), Ollama local server |
+| AI / LLM | Google Gemma 4 (`gemma4:e4b` / `gemma4:12b`) integrated with Qwen3-Coder, served by Ollama |
 | Protocol | Server-Sent Events (SSE), REST, JSON Schema |
 | Testing | Pytest |
 | Infrastructure | 100% Local Workstation (NVIDIA RTX GPU / CPU) |
@@ -129,13 +132,14 @@ flowchart TD
 1. **Initiation:** The user supplies a coding objective either via the web interface (`http://127.0.0.1:8000`) or the CLI (`python run_cli.py run "<task>"`).
 2. **Context Exploration:** The agent invokes `list_directory` and `read_file` to inspect the project layout without loading unneeded files into memory.
 3. **Execution Plan:** Gemma 4 generates a step-by-step chain-of-thought explaining the planned changes.
-4. **Patch Application:** Using `edit_file`, the agent replaces exact blocks of code, generating a standard unified diff that updates the real-time diff viewer.
-5. **Validation & Self-Healing:** The agent executes verification commands (such as `pytest`). If an exit code is non-zero, the `self_healing_triggered` pipeline is activated: the error output is fed back into the agent context, prompting Gemma 4 to formulate an alternate patch and re-test until all checks pass.
+4. **Patch Application:** Using `edit_file`, the agent replaces exact blocks of code, generating a standard unified diff that updates the real-time diff viewer. Qwen3-Coder works alongside Gemma 4 on code understanding and generation.
+5. **Validation & Self-Healing:** The agent executes verification commands (such as `pytest`). If an exit code is non-zero, the `self_healing_triggered` pipeline is activated: the error output is fed back into the agent context, prompting the models to formulate an alternate patch and re-test until all checks pass.
 6. **Task Completion:** Once assertions succeed, the agent calls `finish_task` and returns a summary of verified modifications.
 
 ### Technical Decisions
-- **Local-First Architecture:** By using Ollama with Google's Gemma 4 family, developers maintain complete privacy over their codebases.
-- **Dual Tool Parser:** Quantized local models occasionally output function calls as markdown blocks or XML rather than raw JSON schemas. OctoGemma's parsing pipeline supports both native Ollama function calling and regex-based fallback extraction, ensuring consistent execution.
+- **Local-First Architecture:** By using Ollama with Google's Gemma 4 family and Qwen3-Coder, developers maintain complete privacy over their codebases.
+- **Gemma 4 + Qwen Integration:** Gemma 4 handles reasoning and agent behaviour, and Qwen3-Coder is integrated alongside it for code-focused work, so the agent benefits from both models while staying fully local.
+- **Dual Tool Parser:** Quantized local models occasionally output function calls as markdown blocks or XML rather than raw JSON schemas. OctoGemma's parsing pipeline supports both native Ollama function calling and regex-based fallback extraction, ensuring consistent execution across Gemma 4 and Qwen.
 - **Exact Block Search-and-Replace:** Rather than rewriting entire files (which risks hallucinating deleted functions), `edit_file` performs targeted block replacements with strict uniqueness validation.
 
 ---
@@ -144,7 +148,7 @@ flowchart TD
 
 During the hackathon, the following components were conceived and built:
 - **Core Agent Engine (`src/octogemma/agent.py`):** Built the complete ReAct loop, tool dispatching mechanism, and self-healing error recovery logic.
-- **Ollama Gemma 4 Bridge (`src/octogemma/llm.py`):** Implemented client communication, model health checks, dynamic fallback detection, and streaming model downloads.
+- **Ollama Gemma 4 + Qwen Bridge (`src/octogemma/llm.py`):** Implemented client communication, integration of Gemma 4 with Qwen3-Coder, model health checks, dynamic fallback detection, and streaming model downloads.
 - **Sandboxed Tool Suite (`src/octogemma/tools.py`):** Developed safe workspace tools including directory traversal, scoped file reading, regex grep, block editing with unified diffs, and timeout-protected command execution.
 - **Interactive CLI (`src/octogemma/cli.py`):** Created a rich terminal interface with animated spinners, colored status cards, syntax-highlighted diffs, and interactive chat modes.
 - **Web Studio Dashboard (`src/octogemma/web/` & `src/octogemma/server.py`):** Designed and implemented an interactive web UI featuring real-time SSE streaming, live diff viewer, terminal emulator, and workspace explorer.
@@ -161,7 +165,7 @@ The application runs locally and provides:
 1. An interactive dashboard to launch and monitor autonomous coding workflows.
 2. Real-time visualization of agent thoughts, tool calls, and test results.
 3. Unified diff viewer showing exact additions and deletions.
-4. Model selector supporting Gemma 4 variants and local fallback models.
+4. Model selector supporting Gemma 4 variants, Qwen3-Coder, and local fallback models.
 
 ---
 
@@ -169,7 +173,8 @@ The application runs locally and provides:
 
 ### AI / Models
 - **Google Gemma 4 (`gemma4:e4b` / `gemma4:12b`):** Google's open-weights model family utilized for reasoning, code comprehension, tool invocation, and error diagnosis.
-- **Fallback Models:** `deepseek-coder-v2:16b-lite-instruct-q4_0` and `qwen3-coder:30b-a3b-q4_K_M` for local development redundancy.
+- **Qwen3-Coder (`qwen3-coder:30b-a3b-q4_K_M`):** Alibaba's open-weights coding model, integrated with Gemma 4 for code understanding and generation.
+- **Fallback Model:** `deepseek-coder-v2:16b-lite-instruct-q4_0` for local development redundancy.
 
 ### Open Source Components
 - **Ollama:** Open-source local LLM runner providing the HTTP REST API.
@@ -186,47 +191,6 @@ The application runs locally and provides:
 - **Ollama** installed and running (`ollama serve`)
 - Recommended hardware: NVIDIA GPU (8GB+ VRAM) or Apple Silicon / 16GB+ RAM
 
-### Installation
-
-```bash
-git clone https://github.com/your-username/hacktoberfest-hack-day-coimbatore-x-init-club-and-idea-club.git
-cd hacktoberfest-hack-day-coimbatore-x-init-club-and-idea-club
-
-# Install Python dependencies
-pip install -r requirements.txt
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Default configuration in `.env`:
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-OCTOGEMMA_MODEL=gemma4:e4b
-OCTOGEMMA_MAX_STEPS=25
-OCTOGEMMA_TIMEOUT_SECONDS=120
-OCTOGEMMA_WORKSPACE=.
-WEB_HOST=127.0.0.1
-WEB_PORT=8000
-```
-
-### Pull Gemma 4
-
-Ensure your Ollama server is running, then pull Gemma 4:
-
-```bash
-# Using OctoGemma CLI
-python run_cli.py pull gemma4:e4b
-
-# Or directly with Ollama
-ollama pull gemma4:e4b
-```
-
 ### Running the Project
 
 #### Option 1: Web Studio (Recommended)
@@ -234,31 +198,14 @@ ollama pull gemma4:e4b
 python run_web.py
 ```
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your web browser.
-
-#### Option 2: CLI Mode
-```bash
-# Run a specific autonomous task
-python run_cli.py run "Inspect examples/demo_repo, run pytest, fix the bugs in math_service.py, and verify tests pass"
-
-# Start an interactive CLI chat session
-python run_cli.py chat
-
-# List local models
-python run_cli.py models
-```
-
-#### Running Tests
-```bash
-python -m pytest tests/
-```
-
 ---
 
 ## Challenges and Learnings
 
 1. **Tool-Calling Reliability Across Local Quantizations:** Smaller quantized open models can occasionally deviate from strict JSON schemas. We resolved this by building a dual parsing engine that handles both native Ollama function schemas and XML/Markdown fallback representations.
-2. **Infinite Self-Healing Loops:** Early iterations risked oscillating between broken fixes. We implemented strict loop limits, failure tracking, and error retrospection prompts to guide the agent toward root-cause resolution.
-3. **Low-Latency Streaming:** Coordinating asynchronous tool execution, shell commands, and real-time UI updates was achieved using Server-Sent Events (SSE), ensuring responsive feedback without UI blocking.
+2. **Integrating Gemma 4 with Qwen:** The two model families format tool calls and reasoning differently, so we had to adapt prompts and parsing so both work smoothly inside one agent loop.
+3. **Infinite Self-Healing Loops:** Early iterations risked oscillating between broken fixes. We implemented strict loop limits, failure tracking, and error retrospection prompts to guide the agent toward root-cause resolution.
+4. **Low-Latency Streaming:** Coordinating asynchronous tool execution, shell commands, and real-time UI updates was achieved using Server-Sent Events (SSE), ensuring responsive feedback without UI blocking.
 
 ---
 
@@ -266,6 +213,7 @@ python -m pytest tests/
 
 ### Credits
 - Google DeepMind for the **Gemma 4** open-weights model family.
+- The Qwen team at Alibaba Cloud for **Qwen3-Coder**.
 - The **Ollama** team for local model serving.
 - Organizers: **INIT CLUB × iDEA CLUB** and **Major League Hacking (MLH)** for Hacktoberfest Hack Day Coimbatore 2026.
 
