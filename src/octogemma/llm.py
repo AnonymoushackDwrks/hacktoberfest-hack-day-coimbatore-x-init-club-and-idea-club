@@ -88,6 +88,8 @@ class OllamaClient:
                     except Exception:
                         pass
 
+    _unsupported_models: set = set()
+
     async def chat(
         self,
         model: str,
@@ -96,7 +98,9 @@ class OllamaClient:
         temperature: float = 0.2,
         stream: bool = False,
     ) -> Dict[str, Any]:
-        """Non-streaming chat completion request with optional tool schema."""
+        """Non-streaming chat completion request with automatic tool fallback."""
+        send_tools = tools if (tools and model not in self._unsupported_models) else None
+
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -106,11 +110,17 @@ class OllamaClient:
                 "num_ctx": 16384,  # Expanded context window for agent reasoning
             },
         }
-        if tools:
-            payload["tools"] = tools
+        if send_tools:
+            payload["tools"] = send_tools
 
         async with httpx.AsyncClient(timeout=settings.timeout_seconds) as client:
             res = await client.post(f"{self.base_url}/api/chat", json=payload)
+            if res.status_code == 400 and "does not support tools" in res.text:
+                logger.info(f"Model '{model}' does not support native tools schema. Retrying in ReAct prompt mode.")
+                self._unsupported_models.add(model)
+                payload.pop("tools", None)
+                res = await client.post(f"{self.base_url}/api/chat", json=payload)
+
             if res.status_code != 200:
                 raise RuntimeError(f"Ollama error {res.status_code}: {res.text}")
             return res.json()

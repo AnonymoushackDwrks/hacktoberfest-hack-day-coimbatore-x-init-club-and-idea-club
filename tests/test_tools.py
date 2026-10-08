@@ -72,6 +72,6 @@ def test_sandbox_security(temp_workspace: Path):
 
 def test_run_command(temp_workspace: Path):
     executor = ToolExecutor(temp_workspace)
-    res = executor.run_command("python -c \"print('Sandbox Test')\"")
-    assert res["exit_code"] == 0
-    assert "Sandbox Test" in res["stdout"]
+    res = executor.run_command("python -c \"print(123)\"")
+    assert res.get("exit_code") == 0, f"Command failed: {res}"
+    assert "123" in res.get("stdout", "")

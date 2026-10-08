@@ -197,11 +197,12 @@ class ToolExecutor:
     def run_command(self, command: str, timeout: int = 45) -> Dict[str, Any]:
         """Execute a shell command inside the workspace directory."""
         try:
-            # On Windows, use powershell or cmd
+            # On Windows, use powershell or cmd with DEVNULL stdin to prevent handle inheritance errors
             proc = subprocess.run(
                 command,
                 shell=True,
                 cwd=str(self.workspace),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

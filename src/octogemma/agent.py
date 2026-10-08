@@ -11,26 +11,42 @@ from .tools import AGENT_TOOLS, ToolExecutor
 
 logger = logging.getLogger(__name__)
 
-AGENT_SYSTEM_PROMPT = """You are OctoGemma, an elite autonomous software engineering agent powered by Google Gemma 4.
+AGENT_SYSTEM_PROMPT = """You are OctoGemma, an elite autonomous software engineering agent.
 Your mission is to understand user objectives, explore codebases, autonomously fix bugs, implement features, run tests, and self-repair errors.
 
-### WORKFLOW:
-1. EXPLORE: Start by inspecting directory structure or searching relevant code. Read files before editing.
-2. PLAN & REASON: Think step-by-step. Formulate a hypothesis or implementation plan.
-3. ACT: Apply edits using the available tools (`edit_file`, `write_file`, etc.). Prefer exact replacements with `edit_file`.
-4. VERIFY: Always verify your changes! Run test commands or execution scripts using `run_command` (e.g. `pytest`, `python -m unittest`, `python script.py`).
-5. SELF-HEAL: If verification fails (syntax error, failed assertion, exception), read the stderr/traceback carefully, determine the root cause, and repair the code. Repeat verification until all tests pass.
-6. FINISH: Once all criteria are met and tests pass, call the `finish_task` tool with a clear summary of your changes.
+### AVAILABLE TOOLS:
+You can invoke the following tools to interact with the workspace:
+1. `list_directory`: List files and subdirectories.
+   Arguments: `{"path": ".", "max_depth": 3}`
+2. `read_file`: Read file contents with line numbers.
+   Arguments: `{"path": "relative/path/to/file.py", "start_line": 1, "end_line": 100}`
+3. `write_file`: Create or overwrite a file.
+   Arguments: `{"path": "file.py", "content": "..."}`
+4. `edit_file`: Replace an exact code block within a file with replacement code.
+   Arguments: `{"path": "file.py", "search_pattern": "exact existing code", "replacement": "new replacement code"}`
+5. `grep_search`: Search text or regex across the workspace.
+   Arguments: `{"pattern": "def my_func", "directory": "."}`
+6. `run_command`: Execute a shell command in the workspace (e.g. pytest, python script.py).
+   Arguments: `{"command": "pytest examples/demo_repo", "timeout": 45}`
+7. `finish_task`: Call when the objective is verified and complete.
+   Arguments: `{"summary": "Summary of verified changes made."}`
 
-### TOOL CALLING CONVENTIONS:
-Invoke tools using tool calls. If your output format requires text blocks, you can format tool invocations as:
+### HOW TO INVOKE A TOOL:
+Whenever you want to take an action, explain your reasoning, then output a JSON tool call block:
 ```json
 {
   "name": "tool_name",
-  "arguments": { ... }
+  "arguments": {
+    "param": "value"
+  }
 }
 ```
-Always verify file contents and execute tests before declaring a task complete.
+
+### RULES:
+1. Read or inspect code first before editing.
+2. When fixing bugs, run tests (`run_command`) to confirm the failure and verify the fix.
+3. If an error or test failure occurs, inspect the traceback and self-heal your code.
+4. When all tests pass, invoke `finish_task`.
 """
 
 
@@ -64,7 +80,7 @@ class OctoGemmaAgent:
 
     def _parse_fallback_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
         """Parse tool calls if the model printed JSON or XML in text rather than native schema."""
-        # Check XML-style <tool_call>...</tool_call>
+        # 1. Check XML-style <tool_call>...</tool_call>
         xml_match = re.search(r"<tool_call>[\s\n]*({.*?})[\s\n]*</tool_call>", text, re.DOTALL)
         if xml_match:
             try:
@@ -72,27 +88,55 @@ class OctoGemmaAgent:
             except Exception:
                 pass
 
-        # Check markdown ```json ... ``` blocks
+        # 2. Check markdown ```json ... ``` blocks
         code_blocks = re.findall(r"```(?:json)?\s*({[\s\S]*?})\s*```", text)
         for block in code_blocks:
             try:
                 parsed = json.loads(block)
-                if ("name" in parsed or "tool" in parsed) and ("arguments" in parsed or "parameters" in parsed or "args" in parsed):
+                if ("name" in parsed or "tool" in parsed or "action" in parsed):
                     return {
-                        "name": parsed.get("name") or parsed.get("tool"),
-                        "arguments": parsed.get("arguments") or parsed.get("parameters") or parsed.get("args") or {}
+                        "name": parsed.get("name") or parsed.get("tool") or parsed.get("action"),
+                        "arguments": parsed.get("arguments") or parsed.get("parameters") or parsed.get("args") or parsed.get("action_input") or {}
                     }
+                # Check format {"tool_name": {args}}
+                for tname in ("read_file", "edit_file", "write_file", "run_command", "list_directory", "grep_search", "finish_task"):
+                    if tname in parsed and isinstance(parsed[tname], dict):
+                        return {"name": tname, "arguments": parsed[tname]}
             except Exception:
                 continue
 
-        # Check inline JSON with {"name": "...", "arguments": ...}
-        inline_match = re.search(r'\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}', text, re.DOTALL)
+        # 3. Check inline JSON with {"name": "...", "arguments": ...}
+        inline_match = re.search(r'\{\s*"(?:name|tool|action)"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"(?:arguments|parameters|args|action_input)"\s*:\s*(\{.*?\})\s*\}', text, re.DOTALL)
         if inline_match:
             try:
                 return {
                     "name": inline_match.group(1),
                     "arguments": json.loads(inline_match.group(2))
                 }
+            except Exception:
+                pass
+
+        # 4. Check "Action: tool_name\nAction Input: {...}" pattern
+        action_match = re.search(r'Action:\s*([a-zA-Z0-9_]+)\s*\n+Action Input:\s*({[\s\S]*?})', text)
+        if action_match:
+            try:
+                return {
+                    "name": action_match.group(1).strip(),
+                    "arguments": json.loads(action_match.group(2))
+                }
+            except Exception:
+                pass
+
+        # 5. Check if entire text or trailing block is valid JSON object
+        raw_json_match = re.search(r'({[\s\S]*})', text)
+        if raw_json_match:
+            try:
+                parsed = json.loads(raw_json_match.group(1))
+                if "name" in parsed:
+                    return {
+                        "name": parsed["name"],
+                        "arguments": parsed.get("arguments", parsed.get("args", {}))
+                    }
             except Exception:
                 pass
 
@@ -287,10 +331,16 @@ class OctoGemmaAgent:
 
             # Append tool result to context messages
             tool_result_str = json.dumps(tool_result, ensure_ascii=False)
-            self.messages.append({
-                "role": "tool",
-                "content": tool_result_str
-            })
+            if native_tool_calls:
+                self.messages.append({
+                    "role": "tool",
+                    "content": tool_result_str
+                })
+            else:
+                self.messages.append({
+                    "role": "user",
+                    "content": f"[Observation from tool '{tool_name}']:\n{tool_result_str}\n\nPlease analyze this result and decide your next action or tool call. If the task is verified and complete, call finish_task."
+                })
 
         if not task_completed and step >= self.max_steps:
             yield AgentEvent("step_limit_reached", {
