@@ -8,7 +8,7 @@ Built for **Hacktoberfest Hack Day — Coimbatore 2026**, organized by **INIT CL
 
 ## Team
 
-**Team Name:** OctoGemma Builders
+**Team Name:** Commit Cruisers
 
 | Member | Contribution |
 | ------ | ------------ |
