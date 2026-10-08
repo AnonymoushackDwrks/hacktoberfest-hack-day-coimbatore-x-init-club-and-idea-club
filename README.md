@@ -15,7 +15,7 @@ Built for **Hacktoberfest Hack Day — Coimbatore 2026**, organized by **INIT CL
 | **Vijay Raghav** | Core Architecture & Agent Logic | ReAct Loop, Self-Healing Recovery, Agent Orchestration, Tool Dispatching |
 | **Nikkil Prithvin** | Frontend & LLM Integration | Roo Code Web Studio, SSE Streaming, llama.cpp/Ollama Bridge, Model Management, Fallback Parser |
 | **Dwaragesh** | Sandbox Tools & Execution | File Operations, Terminal/Git Tools, Unified Diff Engine, Safe Workspace Execution |
-| **Astus Samuvel** | CLI, Testing & Infrastructure | CLI Interface, Benchmark Suite, Test Infrastructure, Config System, Documentation, Demo Scenarios |
+| **Austus Samuvel** | CLI, Testing & Infrastructure | CLI Interface, Benchmark Suite, Test Infrastructure, Config System, Documentation, Demo Scenarios |
 ---
 
 ## Problem Statement
