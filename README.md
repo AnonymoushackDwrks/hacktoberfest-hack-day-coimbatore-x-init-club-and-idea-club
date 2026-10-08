@@ -165,19 +165,6 @@ The application runs locally and provides:
 
 ---
 
-## Demo Video
-
-**Demo Video:** [https://youtu.be/placeholder-hacktoberfest-octogemma](https://youtu.be/placeholder-hacktoberfest-octogemma)
-
-The demo illustrates:
-1. Launching the Web Studio and inspecting the local Ollama status.
-2. Selecting the **"Fix Math Service & Pass Tests"** benchmark scenario.
-3. Gemma 4 exploring the workspace, discovering the failing tests in `examples/demo_repo`, and inspecting `math_service.py`.
-4. Generating targeted patches with live diffs.
-5. Executing `pytest`, detecting failures, self-healing the logic, and verifying a 100% test pass rate.
-
----
-
 ## Open Source and AI Usage
 
 ### AI / Models
