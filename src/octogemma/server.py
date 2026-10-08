@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .agent import OctoGemmaAgent
-from .config import settings
+from .config import settings, get_custom_models, save_custom_model, delete_custom_model
 from .llm import OllamaClient
 from .tools import ToolExecutor
 
@@ -46,6 +46,22 @@ class PullModelRequest(BaseModel):
     model: str
 
 
+class AddCustomModelRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    family: Optional[str] = "custom"
+
+
+class CreateModelRequest(BaseModel):
+    name: str
+    gguf_path: Optional[str] = None
+    modelfile: Optional[str] = None
+
+
+class UpdateEndpointRequest(BaseModel):
+    endpoint: str
+
+
 @app.get("/")
 async def root():
     """Serve the Web Studio SPA."""
@@ -53,6 +69,10 @@ async def root():
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Web UI not built")
     return FileResponse(str(index_path))
+
+
+class ChangeWorkspaceRequest(BaseModel):
+    path: str
 
 
 @app.get("/api/health")
@@ -67,15 +87,104 @@ async def health_check():
     }
 
 
+@app.post("/api/workspace")
+async def change_workspace(req: ChangeWorkspaceRequest):
+    """Change the active workspace directory."""
+    new_path = Path(req.path).expanduser().resolve()
+    if not new_path.exists():
+        raise HTTPException(status_code=400, detail=f"Directory '{req.path}' does not exist.")
+    if not new_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path '{req.path}' is not a directory.")
+
+    settings.workspace_dir = new_path
+    return {"success": True, "workspace": str(new_path)}
+
+
 @app.get("/api/models")
 async def list_models():
-    """Retrieve installed models from local Ollama."""
+    """Retrieve installed models from local Ollama and custom registered models."""
     models = await ollama_client.list_models()
     preferred = await ollama_client.get_preferred_model()
+    custom_models = get_custom_models()
     return {
         "models": models,
+        "custom_models": custom_models,
         "preferred": preferred,
-        "default": settings.default_model
+        "default": settings.default_model,
+        "endpoint": ollama_client.base_url
+    }
+
+
+@app.post("/api/models/custom")
+async def add_custom_model(req: AddCustomModelRequest):
+    """Register a custom local model name/tag."""
+    tag = req.name.strip()
+    if not tag:
+        raise HTTPException(status_code=400, detail="Model name cannot be empty.")
+
+    # Try checking if model exists in Ollama to retrieve metadata
+    details = await ollama_client.show_model(tag)
+    model_entry = {
+        "name": tag,
+        "description": req.description or "User-defined local LLM",
+        "family": req.family or "custom",
+        "in_ollama": details is not None,
+        "details": details.get("details", {}) if details else {}
+    }
+    updated = save_custom_model(model_entry)
+    return {"success": True, "model": model_entry, "custom_models": updated}
+
+
+@app.delete("/api/models/custom/{model_name}")
+async def delete_custom_model_endpoint(model_name: str):
+    """Remove a custom registered model."""
+    updated = delete_custom_model(model_name)
+    return {"success": True, "custom_models": updated}
+
+
+@app.post("/api/models/create")
+async def create_local_model(req: CreateModelRequest):
+    """Create an Ollama model from a local GGUF file or custom Modelfile via SSE."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Model name is required.")
+
+    modelfile = req.modelfile
+    if not modelfile and req.gguf_path:
+        gguf_clean = req.gguf_path.strip().replace("\\", "/")
+        modelfile = f"FROM {gguf_clean}\nPARAMETER temperature 0.2\n"
+
+    if not modelfile:
+        raise HTTPException(status_code=400, detail="Either gguf_path or modelfile is required.")
+
+    async def event_generator():
+        async for chunk in ollama_client.create_model_stream(name, modelfile):
+            yield f"data: {json.dumps(chunk)}\n\n"
+
+    # Also automatically save to custom models list
+    save_custom_model({
+        "name": name,
+        "description": f"Imported GGUF: {req.gguf_path or 'Custom Modelfile'}",
+        "family": "gguf-import",
+        "in_ollama": True
+    })
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/models/endpoint")
+async def update_endpoint(req: UpdateEndpointRequest):
+    """Update local Ollama / LLM endpoint URL."""
+    url = req.endpoint.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Endpoint URL cannot be empty.")
+
+    ollama_client.set_base_url(url)
+    connected = await ollama_client.check_health()
+    return {
+        "success": True,
+        "endpoint": ollama_client.base_url,
+        "connected": connected
     }
 
 

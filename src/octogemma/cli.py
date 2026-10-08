@@ -14,12 +14,19 @@ from .agent import OctoGemmaAgent
 from .config import settings
 from .llm import OllamaClient
 
+if sys.platform == "win32":
+    import io
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 app = typer.Typer(
     name="octogemma",
     help="OctoGemma: Privacy-First Autonomous Coding & Self-Healing Agent powered by Google Gemma 4.",
     add_completion=False
 )
-console = Console()
+console = Console(legacy_windows=False, force_terminal=True)
 
 
 def print_banner():
@@ -113,6 +120,102 @@ def pull(
                     progress.update(task, description=f"{status_msg}")
 
         console.print(f"\n[bold green]✓ Successfully pulled model {model}![/bold green]\n")
+
+    asyncio.run(_run())
+
+
+@app.command(name="add")
+def add_model(
+    model: str = typer.Argument(..., help="Model name or tag to register (e.g. llama3.2:3b, qwen2.5-coder:7b)"),
+    description: str = typer.Option("", "--desc", "-d", help="Optional description")
+):
+    """Register or verify an existing local model tag."""
+    print_banner()
+    from .config import save_custom_model
+    client = OllamaClient()
+
+    async def _run():
+        with console.status(f"[bold cyan]Checking model '{model}' in Ollama...[/bold cyan]"):
+            details = await client.show_model(model)
+
+        in_ollama = details is not None
+        save_custom_model({
+            "name": model,
+            "description": description or ("Verified in Ollama" if in_ollama else "Custom local model"),
+            "in_ollama": in_ollama
+        })
+
+        if in_ollama:
+            console.print(f"[bold green]✓ Verified and registered local model:[/] [bold white]{model}[/bold white]")
+        else:
+            console.print(f"[bold yellow]Registered custom model tag:[/] [bold white]{model}[/bold white] (Not yet pulled in Ollama or uses custom runner)")
+        console.print(f"You can now select or pass [bold cyan]--model {model}[/bold cyan] to OctoGemma!\n")
+
+    asyncio.run(_run())
+
+
+@app.command(name="import")
+def import_model(
+    name: str = typer.Argument(..., help="Name for the newly created local model"),
+    gguf_path: str = typer.Argument(..., help="Path to local .gguf file on disk")
+):
+    """Import and build a local Ollama model directly from a .gguf file."""
+    print_banner()
+    client = OllamaClient()
+    file_p = Path(gguf_path).resolve()
+    if not file_p.exists():
+        console.print(f"[bold red]Error:[/] File '{gguf_path}' does not exist.")
+        return
+
+    modelfile = f"FROM {str(file_p).replace('\\', '/')}\nPARAMETER temperature 0.2\n"
+
+    async def _run():
+        console.print(f"[bold cyan]Importing local GGUF into Ollama as:[/] [bold yellow]{name}[/bold yellow]...")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task(f"Building {name}", total=None)
+            async for chunk in client.create_model_stream(name, modelfile):
+                status_msg = chunk.get("status", "")
+                if chunk.get("error"):
+                    console.print(f"[bold red]Import failed:[/] {chunk.get('error')}")
+                    return
+                progress.update(task, description=status_msg or "Processing...")
+
+        from .config import save_custom_model
+        save_custom_model({
+            "name": name,
+            "description": f"Imported GGUF from {file_p.name}",
+            "family": "gguf-import",
+            "in_ollama": True
+        })
+        console.print(f"\n[bold green]✓ Successfully built local model '{name}' from GGUF![/bold green]\n")
+
+    asyncio.run(_run())
+
+
+@app.command()
+def endpoint(
+    url: Optional[str] = typer.Argument(None, help="New Ollama / local LLM endpoint URL (e.g. http://localhost:11434)")
+):
+    """View or update the local Ollama / LLM server endpoint URL."""
+    print_banner()
+    client = OllamaClient()
+    if not url:
+        console.print(f"Current local LLM endpoint: [bold cyan]{client.base_url}[/bold cyan]")
+        return
+
+    client.set_base_url(url)
+
+    async def _run():
+        with console.status(f"[bold cyan]Testing connection to {url}...[/bold cyan]"):
+            ok = await client.check_health()
+        if ok:
+            console.print(f"[bold green]✓ Successfully connected to local LLM at {url}![/bold green]")
+        else:
+            console.print(f"[bold yellow]Warning: Endpoint set to {url}, but server is currently unreachable.[/bold yellow]")
 
     asyncio.run(_run())
 

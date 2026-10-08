@@ -140,6 +140,22 @@ class OctoGemmaAgent:
             except Exception:
                 pass
 
+        # 6. Check markdown bash / shell code blocks (e.g. ```bash \n pytest ... \n ```)
+        bash_match = re.search(r"```(?:bash|sh|shell|zsh|powershell|cmd)?\s*\n+([\s\S]*?)\n*```", text)
+        if bash_match:
+            cmd = bash_match.group(1).strip()
+            if cmd and not cmd.startswith("{") and not cmd.startswith("def ") and not cmd.startswith("class ") and not cmd.startswith("import "):
+                first_line = cmd.split("\n")[0].strip()
+                if first_line in ("ls", "dir", "ls -la", "ls -l"):
+                    return {"name": "list_directory", "arguments": {"path": "."}}
+                return {"name": "run_command", "arguments": {"command": first_line}}
+
+        # 7. Check explicit inline pytest commands
+        if "pytest" in text.lower():
+            p_match = re.search(r"`(pytest[a-zA-Z0-9_\-\.\/ ]*)`", text, re.IGNORECASE)
+            if p_match:
+                return {"name": "run_command", "arguments": {"command": p_match.group(1).strip()}}
+
         return None
 
     def execute_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -260,7 +276,7 @@ class OctoGemmaAgent:
             # If no tool was chosen by model
             if not tool_name:
                 # If model finished in text without calling finish_task
-                if "complete" in raw_content.lower() or "finished" in raw_content.lower():
+                if any(w in raw_content.lower() for w in ("completed", "finished", "all tests pass", "mission accomplished")):
                     yield AgentEvent("task_finished", {
                         "step": step,
                         "summary": raw_content,
@@ -268,11 +284,15 @@ class OctoGemmaAgent:
                     }).to_dict()
                     task_completed = True
                     break
+                elif step == 1:
+                    # In step 1, if model was conversational or gave advice, auto-kickstart workspace inspection
+                    tool_name = "list_directory"
+                    tool_args = {"path": "."}
                 else:
-                    # Nudge model to proceed
+                    # Nudge model strictly to output a tool call
                     self.messages.append({
                         "role": "user",
-                        "content": "Please proceed with the next step using one of the available tools (e.g. read_file, edit_file, run_command, or finish_task)."
+                        "content": "Action required: You must execute an action now using JSON syntax, for example:\n```json\n{\"name\": \"run_command\", \"arguments\": {\"command\": \"pytest examples/demo_repo\"}}\n```"
                     })
                     continue
 

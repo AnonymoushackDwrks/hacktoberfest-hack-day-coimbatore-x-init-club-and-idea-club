@@ -9,6 +9,7 @@ __pycache__/
 env/
 venv/
 ENV/
+.octogemma_models.json
 
 # Testing & Coverage
 .pytest_cache/

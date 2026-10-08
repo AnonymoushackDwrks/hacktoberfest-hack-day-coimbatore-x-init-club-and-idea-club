@@ -46,23 +46,25 @@
             <option value="deepseek-coder-v2:16b-lite-instruct-q4_0">deepseek-coder-v2 (Local)</option>
             <option value="qwen3-coder:30b-a3b-q4_K_M">qwen3-coder:30b (Local)</option>
           </select>
+          <button id="refresh-models-btn" class="icon-btn select-icon-btn" title="Refresh Local Models">↻</button>
         </div>
 
-        <button id="pull-model-btn" class="btn btn-secondary" title="Pull Gemma 4 model into local Ollama">
+        <button id="add-model-btn" class="btn btn-primary" title="Add, Register, or Import Local Models">
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="16"></line>
+            <line x1="8" y1="12" x2="16" y2="12"></line>
           </svg>
-          <span>Pull Gemma 4</span>
+          <span>+ Add Local LLM</span>
         </button>
 
-        <div class="workspace-pill" id="workspace-badge" title="Active Workspace Directory">
+        <button class="workspace-pill" id="workspace-badge" title="Click to Change Workspace Directory">
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
           </svg>
           <span id="workspace-path-text">Workspace</span>
-        </div>
+          <span class="workspace-edit-icon" style="font-size: 0.7rem; opacity: 0.7;">✎</span>
+        </button>
       </div>
     </header>
 
@@ -211,29 +213,139 @@
       </aside>
     </main>
 
-    <!-- Model Pull Modal -->
-    <div id="pull-modal" class="modal-overlay" style="display: none;">
+    <!-- Add / Manage Local LLM Modal -->
+    <div id="add-model-modal" class="modal-overlay" style="display: none;">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div class="modal-title-wrap">
+            <h3>Local LLM Manager</h3>
+            <span class="badge-tag">Ollama & Custom Models</span>
+          </div>
+          <button id="close-add-model-modal-btn" class="icon-btn">&times;</button>
+        </div>
+
+        <!-- Modal Tab Navigation -->
+        <div class="modal-tabs">
+          <button class="modal-tab-btn active" data-tab="tab-add-tag">Register Tag</button>
+          <button class="modal-tab-btn" data-tab="tab-pull-library">Pull from Library</button>
+          <button class="modal-tab-btn" data-tab="tab-import-gguf">Import GGUF / Safetensors</button>
+          <button class="modal-tab-btn" data-tab="tab-endpoint-cfg">Server Endpoint</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- Tab 1: Register Custom Tag / Select Existing -->
+          <div id="tab-add-tag" class="modal-tab-pane active">
+            <p>Add any installed Ollama model, fine-tune checkpoint, or custom model tag to your workspace:</p>
+            <div class="input-group">
+              <label for="custom-model-tag-input">Model Tag / Name:</label>
+              <div class="input-row">
+                <input type="text" id="custom-model-tag-input" class="text-input" placeholder="e.g. qwen2.5-coder:1.5b, deepseek-r1:8b, llama3.2:3b">
+                <button id="add-tag-btn" class="btn btn-primary">Add Model</button>
+              </div>
+            </div>
+
+            <div class="popular-models-section">
+              <span class="section-label">Popular Local Coding & Reasoning Models:</span>
+              <div class="model-quick-chips">
+                <button class="chip model-chip" data-model="gemma4:e4b">gemma4:e4b</button>
+                <button class="chip model-chip" data-model="gemma4:12b">gemma4:12b</button>
+                <button class="chip model-chip" data-model="qwen2.5-coder:1.5b">qwen2.5-coder:1.5b</button>
+                <button class="chip model-chip" data-model="qwen2.5-coder:7b">qwen2.5-coder:7b</button>
+                <button class="chip model-chip" data-model="deepseek-r1:8b">deepseek-r1:8b</button>
+                <button class="chip model-chip" data-model="codellama:7b">codellama:7b</button>
+                <button class="chip model-chip" data-model="llama3.2:3b">llama3.2:3b</button>
+                <button class="chip model-chip" data-model="starcoder2:7b">starcoder2:7b</button>
+              </div>
+            </div>
+
+            <div class="installed-models-section">
+              <span class="section-label">Active Local Models in OctoGemma:</span>
+              <div id="installed-models-list" class="installed-models-list">
+                <div class="empty-state-text">Loading local models...</div>
+              </div>
+            </div>
+            <div id="add-tag-status" class="status-message" style="display: none;"></div>
+          </div>
+
+          <!-- Tab 2: Pull from Library -->
+          <div id="tab-pull-library" class="modal-tab-pane">
+            <p>Download open-weights models directly via Ollama's registry into your local workstation:</p>
+            <div class="input-group">
+              <label for="pull-model-name-input">Model Tag to Pull:</label>
+              <input type="text" id="pull-model-name-input" class="text-input" value="gemma4:e4b" placeholder="e.g. gemma4:e4b, qwen2.5-coder:1.5b">
+            </div>
+            <div class="pull-progress-bar-container" id="pull-progress-container" style="display: none;">
+              <div class="progress-bar">
+                <div id="pull-progress-fill" class="progress-fill" style="width: 0%;"></div>
+              </div>
+              <span id="pull-status-text" class="progress-label">Preparing download...</span>
+            </div>
+            <div class="modal-pane-footer">
+              <button id="start-pull-btn" class="btn btn-primary">Start Download</button>
+            </div>
+          </div>
+
+          <!-- Tab 3: Import Local GGUF / Safetensors -->
+          <div id="tab-import-gguf" class="modal-tab-pane">
+            <p>Import a local <code>.gguf</code> file or raw Safetensors repository folder (with <code>model.safetensors</code>) into Ollama:</p>
+            <div class="input-group">
+              <label for="gguf-model-name-input">New Model Name in OctoGemma:</label>
+              <input type="text" id="gguf-model-name-input" class="text-input" placeholder="e.g. qwen2.5-coder-1.5b-local">
+            </div>
+            <div class="input-group">
+              <label for="gguf-file-path-input">Folder Path or .gguf File Path on Disk:</label>
+              <input type="text" id="gguf-file-path-input" class="text-input" placeholder="e.g. D:/Models/raw_models/Qwen2.5-Coder-1.5B-Instruct">
+            </div>
+            <div class="pull-progress-bar-container" id="gguf-progress-container" style="display: none;">
+              <div class="progress-bar">
+                <div id="gguf-progress-fill" class="progress-fill" style="width: 0%;"></div>
+              </div>
+              <span id="gguf-status-text" class="progress-label">Building model...</span>
+            </div>
+            <div id="gguf-status-msg" class="status-message" style="display: none;"></div>
+            <div class="modal-pane-footer">
+              <button id="start-gguf-import-btn" class="btn btn-primary">Build & Import Model</button>
+            </div>
+          </div>
+
+          <!-- Tab 4: Local Server Endpoint -->
+          <div id="tab-endpoint-cfg" class="modal-tab-pane">
+            <p>Configure the URL of your local LLM daemon (Ollama, LM Studio, or local server):</p>
+            <div class="input-group">
+              <label for="endpoint-url-input">Local Daemon Base URL:</label>
+              <div class="input-row">
+                <input type="text" id="endpoint-url-input" class="text-input" value="http://localhost:11434" placeholder="http://localhost:11434">
+                <button id="save-endpoint-btn" class="btn btn-primary">Test & Connect</button>
+              </div>
+            </div>
+            <div id="endpoint-status-msg" class="status-message" style="display: none;"></div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="close-modal-footer-btn" class="btn btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workspace Switcher Modal -->
+    <div id="workspace-modal" class="modal-overlay" style="display: none;">
       <div class="modal-card">
         <div class="modal-header">
-          <h3>Pull Model into Local Ollama</h3>
-          <button id="close-pull-modal-btn" class="icon-btn">&times;</button>
+          <h3>Change Active Workspace</h3>
+          <button id="close-workspace-modal-btn" class="icon-btn">&times;</button>
         </div>
         <div class="modal-body">
-          <p>Download the official Google Gemma 4 open weights directly into your local Ollama daemon:</p>
+          <p>Specify the absolute or relative folder path you want OctoGemma to inspect, edit, and run tests in:</p>
           <div class="input-group">
-            <label for="pull-model-name-input">Model Tag:</label>
-            <input type="text" id="pull-model-name-input" class="text-input" value="gemma4:e4b">
+            <label for="workspace-path-input">Folder Path:</label>
+            <input type="text" id="workspace-path-input" class="text-input" placeholder="e.g. D:\my-other-project or examples/demo_repo">
           </div>
-          <div class="pull-progress-bar-container" id="pull-progress-container" style="display: none;">
-            <div class="progress-bar">
-              <div id="pull-progress-fill" class="progress-fill" style="width: 0%;"></div>
-            </div>
-            <span id="pull-status-text" class="progress-label">Preparing download...</span>
-          </div>
+          <span id="workspace-modal-status" class="progress-label" style="display: none; color: var(--accent-rose);"></span>
         </div>
         <div class="modal-footer">
-          <button id="cancel-pull-btn" class="btn btn-secondary">Cancel</button>
-          <button id="start-pull-btn" class="btn btn-primary">Start Download</button>
+          <button id="cancel-workspace-btn" class="btn btn-secondary">Cancel</button>
+          <button id="save-workspace-btn" class="btn btn-primary">Switch Folder</button>
         </div>
       </div>
     </div>

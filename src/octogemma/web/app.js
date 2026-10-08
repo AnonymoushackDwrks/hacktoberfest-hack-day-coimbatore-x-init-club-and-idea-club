@@ -7,7 +7,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const ollamaStatusInd = document.getElementById("ollama-status-indicator");
   const ollamaStatusText = document.getElementById("ollama-status-text");
   const modelSelector = document.getElementById("model-selector");
-  const pullModelBtn = document.getElementById("pull-model-btn");
+  const pullModelBtn = document.getElementById("pull-model-btn") || document.getElementById("add-model-btn");
+  const addModelBtn = document.getElementById("add-model-btn");
+  const refreshModelsBtn = document.getElementById("refresh-models-btn");
   const workspacePathText = document.getElementById("workspace-path-text");
   const taskInput = document.getElementById("task-input");
   const runAgentBtn = document.getElementById("run-agent-btn");
@@ -30,18 +32,48 @@ document.addEventListener("DOMContentLoaded", () => {
   const fileCodeContent = document.getElementById("file-code-content");
   const refreshDiffBtn = document.getElementById("refresh-diff-btn");
 
-  // Modal Elements
-  const pullModal = document.getElementById("pull-modal");
-  const closePullModalBtn = document.getElementById("close-pull-modal-btn");
-  const cancelPullBtn = document.getElementById("cancel-pull-btn");
-  const startPullBtn = document.getElementById("start-pull-btn");
+  // Local LLM Manager Modal Elements
+  const addModelModal = document.getElementById("add-model-modal");
+  const pullModal = addModelModal; // alias for compatibility
+  const closeAddModelModalBtn = document.getElementById("close-add-model-modal-btn");
+  const closeModalFooterBtn = document.getElementById("close-modal-footer-btn");
+  const customModelTagInput = document.getElementById("custom-model-tag-input");
+  const addTagBtn = document.getElementById("add-tag-btn");
+  const installedModelsList = document.getElementById("installed-models-list");
+  const addTagStatus = document.getElementById("add-tag-status");
+
   const pullModelNameInput = document.getElementById("pull-model-name-input");
+  const startPullBtn = document.getElementById("start-pull-btn");
   const pullProgressContainer = document.getElementById("pull-progress-container");
   const pullProgressFill = document.getElementById("pull-progress-fill");
   const pullStatusText = document.getElementById("pull-status-text");
 
+  const ggufModelNameInput = document.getElementById("gguf-model-name-input");
+  const ggufFilePathInput = document.getElementById("gguf-file-path-input");
+  const startGgufImportBtn = document.getElementById("start-gguf-import-btn");
+  const ggufProgressContainer = document.getElementById("gguf-progress-container");
+  const ggufProgressFill = document.getElementById("gguf-progress-fill");
+  const ggufStatusText = document.getElementById("gguf-status-text");
+  const ggufStatusMsg = document.getElementById("gguf-status-msg");
+
+  const endpointUrlInput = document.getElementById("endpoint-url-input");
+  const saveEndpointBtn = document.getElementById("save-endpoint-btn");
+  const endpointStatusMsg = document.getElementById("endpoint-status-msg");
+
+  // Workspace Switcher Modal
+  const workspaceBadge = document.getElementById("workspace-badge");
+  const workspaceModal = document.getElementById("workspace-modal");
+  const closeWorkspaceModalBtn = document.getElementById("close-workspace-modal-btn");
+  const cancelWorkspaceBtn = document.getElementById("cancel-workspace-btn");
+  const saveWorkspaceBtn = document.getElementById("save-workspace-btn");
+  const workspacePathInput = document.getElementById("workspace-path-input");
+  const workspaceModalStatus = document.getElementById("workspace-modal-status");
+
   let activeEventSource = null;
   let isRunning = false;
+  let healthFailCount = 0;
+  const HEALTH_FAIL_THRESHOLD = 3; // Only show disconnected after 3 consecutive failures
+  let healthPollTimer = null;
 
   // Initialize System
   async function init() {
@@ -49,25 +81,53 @@ document.addEventListener("DOMContentLoaded", () => {
     await loadModels();
     await loadFiles();
     setupEventListeners();
+    // Start gentle background heartbeat — poll every 15 seconds
+    healthPollTimer = setInterval(checkHealth, 15000);
   }
 
-  // Check Ollama Health
+  // Check Ollama Health — resilient with consecutive-failure threshold
   async function checkHealth() {
     try {
-      const res = await fetch("/api/health");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch("/api/health", { signal: controller.signal });
+      clearTimeout(timeout);
       const data = await res.json();
+
       if (data.ollama_connected) {
+        // Reset fail counter on success
+        const wasDisconnected = healthFailCount >= HEALTH_FAIL_THRESHOLD;
+        healthFailCount = 0;
         ollamaStatusText.textContent = "Ollama Active";
+        ollamaStatusInd.style.color = "var(--accent-emerald, #10b981)";
         ollamaStatusInd.style.borderColor = "rgba(16, 185, 129, 0.4)";
-        workspacePathText.textContent = data.workspace.split(/[\\/]/).pop() || "Workspace";
+        workspacePathText.textContent = data.workspace.split(/[\\/]/).pop() || data.workspace;
+        workspacePathText.dataset.fullPath = data.workspace;
+        workspaceBadge.title = `Active: ${data.workspace} (Click to change)`;
+        // If we just recovered, silently refresh models list
+        if (wasDisconnected) {
+          await loadModels();
+        }
       } else {
-        ollamaStatusText.textContent = "Ollama Disconnected";
-        ollamaStatusInd.style.color = "var(--accent-rose)";
-        ollamaStatusInd.style.borderColor = "rgba(244, 63, 94, 0.4)";
+        healthFailCount++;
+        if (healthFailCount >= HEALTH_FAIL_THRESHOLD) {
+          ollamaStatusText.textContent = "Ollama Disconnected";
+          ollamaStatusInd.style.color = "var(--accent-rose, #f43f5e)";
+          ollamaStatusInd.style.borderColor = "rgba(244, 63, 94, 0.4)";
+        } else {
+          // Brief blip — keep showing active, just log it
+          console.log(`Health check: Ollama not connected (attempt ${healthFailCount}/${HEALTH_FAIL_THRESHOLD})`);
+        }
       }
     } catch (err) {
-      ollamaStatusText.textContent = "Backend Offline";
-      ollamaStatusInd.style.color = "var(--accent-rose)";
+      healthFailCount++;
+      if (healthFailCount >= HEALTH_FAIL_THRESHOLD) {
+        ollamaStatusText.textContent = "Backend Offline";
+        ollamaStatusInd.style.color = "var(--accent-rose, #f43f5e)";
+        ollamaStatusInd.style.borderColor = "rgba(244, 63, 94, 0.4)";
+      } else {
+        console.log(`Health check: fetch error (attempt ${healthFailCount}/${HEALTH_FAIL_THRESHOLD}): ${err.message}`);
+      }
     }
   }
 
@@ -76,14 +136,21 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const res = await fetch("/api/models");
       const data = await res.json();
+      const currentSelected = modelSelector.value;
+
+      if (data.endpoint && endpointUrlInput) {
+        endpointUrlInput.value = data.endpoint;
+      }
+
+      modelSelector.innerHTML = "";
       if (data.models && data.models.length > 0) {
-        modelSelector.innerHTML = "";
         data.models.forEach(m => {
           const opt = document.createElement("option");
           opt.value = m.name;
           const isGemma = m.name.includes("gemma");
-          opt.textContent = `${m.name} ${isGemma ? '★ Recommended' : ''}`;
-          if (m.name === data.preferred) {
+          const isCustom = m.is_custom;
+          opt.textContent = `${m.name} ${isGemma ? '★ Recommended' : (isCustom ? '⚙ Custom' : '')}`;
+          if (m.name === currentSelected || (!currentSelected && m.name === data.preferred)) {
             opt.selected = true;
           }
           modelSelector.appendChild(opt);
@@ -98,8 +165,77 @@ document.addEventListener("DOMContentLoaded", () => {
           modelSelector.appendChild(gemmaOpt);
         }
       }
+
+      // Add Manage / Add New option at bottom
+      const manageOpt = document.createElement("option");
+      manageOpt.value = "__manage__";
+      manageOpt.textContent = "+ Add / Manage Local LLMs...";
+      modelSelector.appendChild(manageOpt);
+
+      // Render Installed Models in Modal Tab 1
+      renderInstalledModels(data.models || [], currentSelected || data.preferred);
     } catch (err) {
       console.error("Failed to load models:", err);
+    }
+  }
+
+  // Render Installed Models in Modal List
+  function renderInstalledModels(models, activeModel) {
+    if (!installedModelsList) return;
+    if (!models || models.length === 0) {
+      installedModelsList.innerHTML = '<div class="empty-state-text" style="color: var(--text-dim); padding: 8px;">No local models detected. Use the tabs above to add or pull one.</div>';
+      return;
+    }
+
+    installedModelsList.innerHTML = "";
+    models.forEach(m => {
+      const item = document.createElement("div");
+      item.className = "installed-model-item";
+
+      const sizeStr = m.size ? `• ${formatBytes(m.size)}` : "";
+      const isCustom = m.is_custom;
+      const isCurrent = m.name === (modelSelector.value || activeModel);
+
+      item.innerHTML = `
+        <div class="model-info">
+          <span class="model-name">${escapeHtml(m.name)}</span>
+          <span class="model-size">${sizeStr}</span>
+          <span class="tag-badge ${isCustom ? 'custom' : ''}">${isCustom ? 'Custom' : 'Ollama'}</span>
+          ${isCurrent ? '<span class="tag-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">Active</span>' : ''}
+        </div>
+        <div class="model-actions">
+          <button class="btn btn-secondary select-model-btn" style="padding: 3px 8px; font-size: 0.72rem;" data-name="${escapeHtml(m.name)}">
+            ${isCurrent ? 'Selected' : 'Use'}
+          </button>
+          ${isCustom ? `<button class="icon-btn delete-custom-btn" style="color: var(--accent-rose); font-size: 0.85rem;" title="Remove Custom Model" data-name="${escapeHtml(m.name)}">&times;</button>` : ''}
+        </div>
+      `;
+
+      item.querySelector(".select-model-btn").addEventListener("click", () => {
+        modelSelector.value = m.name;
+        renderInstalledModels(models, m.name);
+        if (addModelModal) addModelModal.style.display = "none";
+      });
+
+      const delBtn = item.querySelector(".delete-custom-btn");
+      if (delBtn) {
+        delBtn.addEventListener("click", async () => {
+          if (confirm(`Remove custom model tag '${m.name}'?`)) {
+            await deleteCustomModel(m.name);
+          }
+        });
+      }
+
+      installedModelsList.appendChild(item);
+    });
+  }
+
+  async function deleteCustomModel(modelName) {
+    try {
+      await fetch(`/api/models/custom/${encodeURIComponent(modelName)}`, { method: "DELETE" });
+      await loadModels();
+    } catch (err) {
+      console.error("Failed to delete model:", err);
     }
   }
 
@@ -229,21 +365,143 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    // Modal Events
-    pullModelBtn.addEventListener("click", () => {
-      pullModal.style.display = "flex";
-      pullProgressContainer.style.display = "none";
+    // Model Selector Change & Refresh
+    modelSelector.addEventListener("change", () => {
+      if (modelSelector.value === "__manage__") {
+        openModelModal();
+      }
     });
 
-    closePullModalBtn.addEventListener("click", () => {
-      pullModal.style.display = "none";
+    if (refreshModelsBtn) {
+      refreshModelsBtn.addEventListener("click", async () => {
+        refreshModelsBtn.classList.add("spinning");
+        await loadModels();
+        setTimeout(() => refreshModelsBtn.classList.remove("spinning"), 500);
+      });
+    }
+
+    // Modal Opening & Closing
+    function openModelModal(initialTab = "tab-add-tag") {
+      if (!addModelModal) return;
+      addModelModal.style.display = "flex";
+      switchModalTab(initialTab);
+    }
+
+    function closeModelModal() {
+      if (!addModelModal) return;
+      addModelModal.style.display = "none";
+      if (modelSelector.value === "__manage__") {
+        modelSelector.selectedIndex = 0;
+      }
+    }
+
+    if (addModelBtn) {
+      addModelBtn.addEventListener("click", () => openModelModal("tab-add-tag"));
+    }
+    if (pullModelBtn && pullModelBtn !== addModelBtn) {
+      pullModelBtn.addEventListener("click", () => openModelModal("tab-pull-library"));
+    }
+    if (closeAddModelModalBtn) {
+      closeAddModelModalBtn.addEventListener("click", closeModelModal);
+    }
+    if (closeModalFooterBtn) {
+      closeModalFooterBtn.addEventListener("click", closeModelModal);
+    }
+
+    // Modal Tab Navigation
+    const modalTabBtns = document.querySelectorAll(".modal-tab-btn");
+    const modalTabPanes = document.querySelectorAll(".modal-tab-pane");
+    function switchModalTab(targetTabId) {
+      modalTabBtns.forEach(b => b.classList.toggle("active", b.dataset.tab === targetTabId));
+      modalTabPanes.forEach(p => p.classList.toggle("active", p.id === targetTabId));
+    }
+    modalTabBtns.forEach(btn => {
+      btn.addEventListener("click", () => switchModalTab(btn.dataset.tab));
     });
 
-    cancelPullBtn.addEventListener("click", () => {
-      pullModal.style.display = "none";
+    // Model Quick Chips in Tab 1
+    document.querySelectorAll(".model-chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        if (customModelTagInput) {
+          customModelTagInput.value = chip.dataset.model;
+          customModelTagInput.focus();
+        }
+      });
     });
 
-    startPullBtn.addEventListener("click", startPullModel);
+    // Tab 1: Add Custom / Installed Model Tag
+    if (addTagBtn) {
+      addTagBtn.addEventListener("click", addCustomModelTag);
+    }
+    if (customModelTagInput) {
+      customModelTagInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addCustomModelTag();
+      });
+    }
+
+    // Tab 2: Pull Model from Registry
+    if (startPullBtn) {
+      startPullBtn.addEventListener("click", startPullModel);
+    }
+
+    // Tab 3: Import Local GGUF
+    if (startGgufImportBtn) {
+      startGgufImportBtn.addEventListener("click", startGgufImport);
+    }
+
+    // Tab 4: Server Endpoint
+    if (saveEndpointBtn) {
+      saveEndpointBtn.addEventListener("click", saveEndpointConfig);
+    }
+
+    // Workspace Switcher Events
+    workspaceBadge.addEventListener("click", () => {
+      workspaceModal.style.display = "flex";
+      workspaceModalStatus.style.display = "none";
+      workspacePathInput.value = workspacePathText.dataset.fullPath || "";
+      workspacePathInput.focus();
+    });
+
+    closeWorkspaceModalBtn.addEventListener("click", () => {
+      workspaceModal.style.display = "none";
+    });
+
+    cancelWorkspaceBtn.addEventListener("click", () => {
+      workspaceModal.style.display = "none";
+    });
+
+    saveWorkspaceBtn.addEventListener("click", async () => {
+      const newPath = workspacePathInput.value.trim();
+      if (!newPath) return;
+
+      saveWorkspaceBtn.disabled = true;
+      workspaceModalStatus.style.display = "none";
+
+      try {
+        const res = await fetch("/api/workspace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: newPath })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          workspacePathText.textContent = data.workspace.split(/[\\/]/).pop() || data.workspace;
+          workspacePathText.dataset.fullPath = data.workspace;
+          workspaceBadge.title = `Active: ${data.workspace} (Click to change)`;
+          workspaceModal.style.display = "none";
+          await loadFiles();
+          await refreshDiff();
+        } else {
+          workspaceModalStatus.textContent = data.detail || "Failed to switch workspace";
+          workspaceModalStatus.style.display = "block";
+        }
+      } catch (err) {
+        workspaceModalStatus.textContent = `Error: ${err.message}`;
+        workspaceModalStatus.style.display = "block";
+      } finally {
+        saveWorkspaceBtn.disabled = false;
+      }
+    });
   }
 
   // Execute Agent via Server-Sent Events (SSE)
@@ -518,13 +776,163 @@ document.addEventListener("DOMContentLoaded", () => {
       pullStatusText.textContent = `✓ Successfully downloaded ${modelTag}!`;
       pullProgressFill.style.width = "100%";
       setTimeout(() => {
-        pullModal.style.display = "none";
+        if (addModelModal) addModelModal.style.display = "none";
         startPullBtn.disabled = false;
         loadModels();
       }, 1500);
     } catch (err) {
       pullStatusText.textContent = `Error: ${err.message}`;
       startPullBtn.disabled = false;
+    }
+  }
+
+  // Tab 1: Add Custom Model Tag
+  async function addCustomModelTag() {
+    const tagName = customModelTagInput.value.trim();
+    if (!tagName) return;
+
+    addTagBtn.disabled = true;
+    addTagStatus.style.display = "block";
+    addTagStatus.className = "status-message";
+    addTagStatus.textContent = `Verifying model '${tagName}'...`;
+
+    try {
+      const res = await fetch("/api/models/custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: tagName })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        addTagStatus.className = "status-message success";
+        addTagStatus.textContent = `✓ Successfully added '${tagName}' to OctoGemma!`;
+        customModelTagInput.value = "";
+        await loadModels();
+        modelSelector.value = tagName;
+        setTimeout(() => {
+          addTagStatus.style.display = "none";
+        }, 2500);
+      } else {
+        addTagStatus.className = "status-message error";
+        addTagStatus.textContent = data.detail || "Failed to add model.";
+      }
+    } catch (err) {
+      addTagStatus.className = "status-message error";
+      addTagStatus.textContent = `Error: ${err.message}`;
+    } finally {
+      addTagBtn.disabled = false;
+    }
+  }
+
+  // Tab 3: Import Local GGUF
+  async function startGgufImport() {
+    const modelName = ggufModelNameInput.value.trim();
+    const ggufPath = ggufFilePathInput.value.trim();
+
+    if (!modelName || !ggufPath) {
+      if (ggufStatusMsg) {
+        ggufStatusMsg.style.display = "block";
+        ggufStatusMsg.className = "status-message error";
+        ggufStatusMsg.textContent = "Please provide both a Model Name and a valid local GGUF File Path.";
+      }
+      return;
+    }
+
+    startGgufImportBtn.disabled = true;
+    ggufProgressContainer.style.display = "block";
+    if (ggufStatusMsg) ggufStatusMsg.style.display = "none";
+    ggufStatusText.textContent = `Building Ollama model '${modelName}' from GGUF...`;
+
+    try {
+      const res = await fetch("/api/models/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: modelName, gguf_path: ggufPath })
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop();
+
+        for (const block of lines) {
+          const match = block.match(/^data:\s*(.+)$/m);
+          if (match) {
+            try {
+              const chunk = JSON.parse(match[1]);
+              const status = chunk.status || "";
+              const completed = chunk.completed || 0;
+              const total = chunk.total || 0;
+
+              if (total > 0) {
+                const pct = Math.round((completed / total) * 100);
+                ggufProgressFill.style.width = `${pct}%`;
+                ggufStatusText.textContent = `${status} - ${pct}%`;
+              } else {
+                ggufStatusText.textContent = status || "Processing GGUF...";
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
+      ggufStatusText.textContent = `✓ Successfully created model '${modelName}'!`;
+      ggufProgressFill.style.width = "100%";
+      await loadModels();
+      modelSelector.value = modelName;
+      setTimeout(() => {
+        if (addModelModal) addModelModal.style.display = "none";
+        startGgufImportBtn.disabled = false;
+      }, 1500);
+    } catch (err) {
+      if (ggufStatusMsg) {
+        ggufStatusMsg.style.display = "block";
+        ggufStatusMsg.className = "status-message error";
+        ggufStatusMsg.textContent = `Import failed: ${err.message}`;
+      }
+      startGgufImportBtn.disabled = false;
+    }
+  }
+
+  // Tab 4: Save Endpoint Config
+  async function saveEndpointConfig() {
+    const url = endpointUrlInput.value.trim();
+    if (!url) return;
+
+    saveEndpointBtn.disabled = true;
+    endpointStatusMsg.style.display = "block";
+    endpointStatusMsg.className = "status-message";
+    endpointStatusMsg.textContent = "Connecting to endpoint...";
+
+    try {
+      const res = await fetch("/api/models/endpoint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: url })
+      });
+      const data = await res.json();
+      if (data.connected) {
+        endpointStatusMsg.className = "status-message success";
+        endpointStatusMsg.textContent = `✓ Connected to ${data.endpoint}!`;
+        await checkHealth();
+        await loadModels();
+      } else {
+        endpointStatusMsg.className = "status-message error";
+        endpointStatusMsg.textContent = `Endpoint set to ${data.endpoint}, but server is unreachable.`;
+        await checkHealth();
+      }
+    } catch (err) {
+      endpointStatusMsg.className = "status-message error";
+      endpointStatusMsg.textContent = `Error: ${err.message}`;
+    } finally {
+      saveEndpointBtn.disabled = false;
     }
   }
 

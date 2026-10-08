@@ -254,9 +254,26 @@ python run_cli.py run "Inspect examples/demo_repo, run pytest, fix the bugs in m
 # Start an interactive CLI chat session
 python run_cli.py chat
 
-# List local models
+# List local models (including installed and custom models)
 python run_cli.py models
+
+# Register an existing local model tag
+python run_cli.py add qwen2.5-coder:7b
+
+# Import and build a local Ollama model directly from a .gguf file on disk
+python run_cli.py import my-coder C:/models/model.gguf
+
+# View or update the local Ollama / LLM daemon endpoint
+python run_cli.py endpoint http://localhost:11434
 ```
+
+### Managing Local LLMs inside the Web Studio
+The Web Studio includes an integrated **Local LLM Manager**:
+1. Click **"+ Add Local LLM"** in the top navigation bar or select **"+ Add / Manage Local LLMs..."** in the model dropdown.
+2. **Register Tag:** Instantly add any existing Ollama model, fine-tune checkpoint, or custom model tag (e.g. `qwen2.5-coder:7b`, `deepseek-r1:8b`, `codellama`, `llama3.2`).
+3. **Pull from Library:** Download models directly from Ollama with real-time download progress.
+4. **Import GGUF:** Point to any `.gguf` file stored on your workstation to create and import a local model into Ollama without redownloading.
+5. **Server Endpoint:** Switch and test the Ollama / local LLM daemon URL at runtime.
 
 #### Running Tests
 ```bash
